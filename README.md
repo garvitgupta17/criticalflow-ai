@@ -1,7 +1,8 @@
 # criticalflow-ai
 CriticalFlow AI is an incident-intelligence system for IBM Z/LinuxONE environments. The system receives operational events or logs, detects abnormal behavior, identifies the incident, retrieves relevant operational knowledge, uses IBM Granite to explain the likely root cause with evidence, recommends a response, and shows the result in a dashboard.
 
-# GitHub Repository Structure
+## GitHub Repository Structure
+```
 CriticalFlowAI/
 │
 ├── README.md
@@ -79,4 +80,4 @@ CriticalFlowAI/
     ├── seed_demo_data.py
     ├── run_pipeline.py
     └── health_check.py
-<img width="468" height="642" alt="image" src="https://github.com/user-attachments/assets/c9cd1ff1-b04f-4378-8a8e-fba3963f4014" />
+```
