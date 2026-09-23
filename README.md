@@ -81,3 +81,15 @@ CriticalFlowAI/
     ├── run_pipeline.py
     └── health_check.py
 ```
+
+## Git Branching Strategy
+```
+main
+  └── dev
+       ├── feature/ibmz
+       ├── feature/data-pipeline
+       ├── feature/anomaly
+       ├── feature/rag-granite
+       ├── feature/api-integration
+       └── feature/dashboard
+```
