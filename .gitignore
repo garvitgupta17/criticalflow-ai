@@ -1,0 +1,17 @@
+﻿# Secrets and environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local development files
+.vscode/
+.idea/
