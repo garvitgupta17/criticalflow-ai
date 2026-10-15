@@ -1,8 +1,0 @@
-   export ZOSMF_URL=https://204.90.115.200:10443
-   export ZOSMF_USER=Z75376
-   export ZOSMF_PASSWORD=PQH32MEW
-   export ZOSMF_VERIFY_TLS=false
-   export MOCK_MODE=False
-   export CF_JOB_PREFIX="Z75376*"
-   export CF_JOB_OWNER=Z75376
-   export CF_DEFAULT_SUBSYSTEM=PAYMENT-API
