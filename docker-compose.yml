@@ -6,9 +6,9 @@ services:
     environment:
       POSTGRES_DB: criticalflow
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -58,7 +58,7 @@ services:
     build:
       context: ./m3-backend
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/criticalflow
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/criticalflow
       M4_URL: http://m4-prediction:8001
       M5_URL: http://m5-llm:8000
     ports:
@@ -107,9 +107,7 @@ services:
     depends_on:
       m3-backend:
         condition: service_healthy
-    # The M2 Dockerfile references docker/healthcheck.py, which is not present in this ZIP.
-    healthcheck:
-      disable: true
+    # Uses the image's HEALTHCHECK (docker/healthcheck.py: heartbeat file must be fresh).
     restart: unless-stopped
 
   # The dashboard reads an SSL-enabled PostgreSQL URL (for example, the project's Neon DB).

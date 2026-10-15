@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -92,6 +93,19 @@ def run_cycle(s: Settings, client, api: httpx.Client | None, *, dry_run: bool, o
     return stats, rc
 
 
+def write_heartbeat() -> None:
+    """Touch CF_HEARTBEAT_FILE after a fully successful cycle (read by docker/healthcheck.py)."""
+    path = os.environ.get("CF_HEARTBEAT_FILE")
+    if not path:
+        return
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(int(time.time())))
+    except OSError as exc:
+        log.warning("could not write heartbeat file %s: %s", path, exc)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--once", action="store_true")
@@ -128,6 +142,8 @@ def main() -> int:
                 log.error("z/OSMF error: %s", exc)
                 stats, rc = {}, 2
             log.info("cycle done: %s rc=%s", stats, rc)
+            if rc == 0:
+                write_heartbeat()
             worst = max(worst, rc)
             if a.once or rc == 3:
                 break
