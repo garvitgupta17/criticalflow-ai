@@ -21,11 +21,11 @@ load_dotenv()
 def get_connection():
     """Connect securely to the Neon PostgreSQL database."""
 
-    database_url = os.getenv("DATABASE_URL")
+    database_url = os.getenv("DASHBOARD_DATABASE_URL")
 
     if not database_url:
         raise RuntimeError(
-            "DATABASE_URL is missing. "
+            "DASHBOARD_DATABASE_URL is missing. "
             "Please check the .env file in your project root."
         )
 
