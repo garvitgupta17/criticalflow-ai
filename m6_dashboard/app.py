@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Mapping
 
 import pandas as pd
@@ -271,8 +272,9 @@ def available_columns(frame, columns):
 try:
     df = get_incidents()
 except Exception as exc:
-    st.error("Could not load incidents from Neon PostgreSQL.")
-    st.exception(exc)
+    # Show a generic message to viewers; keep details (without secrets) in server logs only.
+    logging.getLogger("m6_dashboard").error("incident load failed: %s", type(exc).__name__)
+    st.error("Unable to load incident data. Please contact the administrator.")
     st.stop()
 
 if df.empty:
