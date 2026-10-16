@@ -90,6 +90,8 @@ def run_cycle(s: Settings, client, api: httpx.Client | None, *, dry_run: bool, o
                 stats["deferred"] += 1
                 return stats, 1
             time.sleep(1.0 / max_rps)
+        # prefix finished without error: still alive and making progress (long cycles stay healthy)
+        write_heartbeat()
     return stats, rc
 
 
