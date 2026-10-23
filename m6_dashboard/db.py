@@ -1,6 +1,8 @@
 
 import os
 
+from pathlib import Path
+
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
@@ -11,28 +13,51 @@ from dotenv import load_dotenv
 # 1. Load environment variables
 # --------------------------------------------------
 
-load_dotenv()
+ROOT_DIR = Path(__file__).resolve().parent.parent
+env_path = ROOT_DIR / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    load_dotenv()
 
 
 # --------------------------------------------------
-# 2. Connect to Neon PostgreSQL
+# 2. Connect to PostgreSQL
 # --------------------------------------------------
+
+def get_database_url() -> str:
+    """Resolve database URL from environment or construct default local connection string."""
+    url = (os.getenv("DASHBOARD_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
+    if url:
+        return url
+
+    # Fallback to local PostgreSQL service using environment variables with defaults
+    user = os.getenv("POSTGRES_USER", "postgres")
+    password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    db = os.getenv("POSTGRES_DB", "criticalflow")
+
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
 
 def get_connection():
-    """Connect securely to the Neon PostgreSQL database."""
+    """Connect to PostgreSQL (supports both local Docker and hosted Neon DB)."""
 
-    database_url = os.getenv("DASHBOARD_DATABASE_URL") or os.getenv("DATABASE_URL")
+    database_url = get_database_url()
 
-    if not database_url:
-        raise RuntimeError(
-            "DASHBOARD_DATABASE_URL (or DATABASE_URL) is not set. "
-            "Please check the .env file in your project root."
-        )
+    connect_kwargs = {"connect_timeout": 10}
+
+    # Respect explicit sslmode in connection URL if present.
+    # Otherwise use DB_SSLMODE / PGSSLMODE or default to "prefer"
+    # (negotiates SSL with Neon DB, cleanly falls back to non-SSL on local Docker postgres).
+    if "sslmode=" not in database_url:
+        sslmode = os.getenv("DB_SSLMODE") or os.getenv("PGSSLMODE") or "prefer"
+        connect_kwargs["sslmode"] = sslmode
 
     return psycopg.connect(
         database_url,
-        sslmode="require",
-        connect_timeout=10,
+        **connect_kwargs,
     )
 
 
@@ -49,12 +74,20 @@ def load_incidents():
         ORDER BY event_time DESC;
     """
 
-    with get_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(query)
-            rows = cursor.fetchall()
-
-    return pd.DataFrame(rows)
+    try:
+        with get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+        return pd.DataFrame(rows)
+    except Exception as exc:
+        mock_path = Path(__file__).resolve().parent / "mock_data" / "incidents.json"
+        if mock_path.exists():
+            import json
+            with open(mock_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return pd.DataFrame(data)
+        raise exc
 
 
 # --------------------------------------------------

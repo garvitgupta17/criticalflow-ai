@@ -1,14 +1,90 @@
-# secrets
+
+# ==============================
+# Secrets and environment files
+# ==============================
 .env
 .env.*
 !.env.example
+!.env.template
+*.pem
+*.key
 
-# python
+# ==============================
+# Python
+# ==============================
 __pycache__/
 *.py[cod]
-.venv/
-venv/
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# misc
+# ==============================
+# Virtual environments
+# ==============================
+venv/
+.venv/
+env/
+ENV/
+
+# ==============================
+# Jupyter
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# IDE and OS files
+# ==============================
 .DS_Store
-*.zip
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==============================
+# Logs and temporary files
+# ==============================
+*.log
+logs/
+tmp/
+temp/
+
+# ==============================
+# Local databases and backups
+# ==============================
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+
+# ==============================
+# Build and distribution
+# ==============================
+build/
+dist/
+*.egg-info/
+
+# ==============================
+# Large generated data
+# Review these patterns before enabling
+# ==============================
+# data/raw/
+# data/processed/
+# datasets/
+
+# ==============================
+# Generated ML artifacts
+# Do not ignore required project models
+# ==============================
+# models/generated/
+# *.joblib
+# *.pkl
+
+# ==============================
+# Node.js, if used by dashboard
+# ==============================
+node_modules/
+npm-debug.log*

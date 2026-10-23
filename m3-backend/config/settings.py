@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # --- M4 (prediction) and M5 (explanation) services that M3 calls. Empty URL = built-in mock (dev only). ---
     m4_url: str = ""                      # docker: http://m4-prediction:8001   local: http://localhost:8001
-    m5_url: str = ""                      # docker: http://m5-llm:8002          local: http://localhost:8002
+    m5_url: str = ""                      # docker: http://m5-llm:8000          local: http://localhost:8002
     m4_path: str = "/predict"
     m5_path: str = "/explain"
     m4_timeout_s: float = 15.0

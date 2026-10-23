@@ -1,11 +1,14 @@
-import os
+from pathlib import Path
 import joblib
 import pandas as pd
 import numpy as np
 
-# Model load karein
-model_path = os.path.join(os.path.dirname(__file__), 'models', 'm4_pipeline.joblib')
-artifacts = joblib.load(model_path)
+# Model load
+MODEL_PATH = Path(__file__).resolve().parent / "models" / "m4_pipeline.joblib"
+if not MODEL_PATH.exists():
+    raise FileNotFoundError(f"M4 model artifact not found at: {MODEL_PATH}")
+
+artifacts = joblib.load(MODEL_PATH)
 
 risk_model = artifacts['risk_model']
 sev_model = artifacts['sev_model']

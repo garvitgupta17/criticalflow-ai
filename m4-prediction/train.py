@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import joblib
@@ -10,8 +11,20 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_squared_error
 
-# 1. Path set karein
-csv_path = os.path.join(os.path.dirname(__file__), '..', 'training_data.csv')
+# 1. Path set karein (robust Pathlib resolution)
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+DEFAULT_DATA_PATH = REPO_ROOT / "m3-backend" / "data" / "samples" / "training_data.csv"
+
+csv_path = Path(os.environ.get("TRAINING_DATA_PATH", DEFAULT_DATA_PATH))
+if not csv_path.exists():
+    fallback = REPO_ROOT / "training_data.csv"
+    if fallback.exists():
+        csv_path = fallback
+
+if not csv_path.exists():
+    raise FileNotFoundError(f"Training dataset not found at: {csv_path}")
+
 print(f"Loading data from: {csv_path}")
 df = pd.read_csv(csv_path)
 
@@ -89,9 +102,9 @@ print("\n--- Incident Type Classification Report ---")
 print(classification_report(y_type_val, type_val_preds))
 
 # 5. Model save karein
-models_dir = os.path.join(os.path.dirname(__file__), 'models')
-os.makedirs(models_dir, exist_ok=True)
-output_path = os.path.join(models_dir, 'm4_pipeline.joblib')
+models_dir = BASE_DIR / "models"
+models_dir.mkdir(parents=True, exist_ok=True)
+output_path = Path(os.environ.get("MODEL_OUTPUT_PATH", models_dir / "m4_pipeline.joblib"))
 
 joblib.dump({
     'risk_model': risk_model,
