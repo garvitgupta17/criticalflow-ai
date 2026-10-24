@@ -27,19 +27,45 @@ class M5ResponseContract(BaseModel):
 # 2. RAG Vector Database Initialization
 # ==========================================
 def initialize_vector_db():
-    """Loads markdown files from knowledge_base and creates a local Chroma vector database."""
-    # Ensure directory exists or handle gracefully
-    if not os.path.exists("./knowledge_base"):
-        os.makedirs("./knowledge_base", exist_ok=True)
-        
-    loader = DirectoryLoader("./knowledge_base/", glob="**/*.md", loader_cls=TextLoader)
+    """Load Markdown knowledge-base files and initialize ChromaDB once."""
+    os.makedirs("./knowledge_base", exist_ok=True)
+
+    loader = DirectoryLoader(
+        "./knowledge_base/",
+        glob="**/*.md",
+        loader_cls=TextLoader,
+    )
     documents = loader.load()
-    
-    text_splitter = CharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+
+    text_splitter = CharacterTextSplitter(
+        chunk_size=400,
+        chunk_overlap=50,
+    )
     docs = text_splitter.split_documents(documents)
-    
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_db = Chroma.from_documents(docs, embeddings, persist_directory="./vector_db")
+
+    # Remove exact duplicate chunks while preserving their source metadata.
+    unique_docs = []
+    seen = set()
+
+    for doc in docs:
+        key = (doc.page_content.strip(), doc.metadata.get("source", "unknown"))
+        if key not in seen:
+            seen.add(key)
+            unique_docs.append(doc)
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2"
+    )
+
+    vector_db = Chroma(
+        collection_name="langchain",
+        embedding_function=embeddings,
+        persist_directory="./vector_db",
+    )
+
+    if vector_db._collection.count() == 0:
+        vector_db.add_documents(unique_docs)
+
     return vector_db.as_retriever(search_kwargs={"k": 2})
 
 

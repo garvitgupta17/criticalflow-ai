@@ -14,12 +14,16 @@ from __future__ import annotations
 import logging
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 from google import genai
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from functools import lru_cache
+from m5_pipeline import initialize_vector_db
 
 log = logging.getLogger("m5.api")
 
@@ -31,6 +35,17 @@ gemini_client = (
     if GEMINI_API_KEY
     else None
 )
+
+@lru_cache(maxsize=1)
+def get_rag_retriever():
+    """Initialize the ChromaDB retriever once per API process."""
+    try:
+        retriever = initialize_vector_db()
+        log.info("RAG retriever initialized successfully.")
+        return retriever
+    except Exception:
+        log.exception("RAG initialization failed; continuing without retrieval.")
+        return None
 
 app = FastAPI(
     title="CriticalFlow AI: M5 GenAI RCA API",
@@ -354,6 +369,40 @@ def _generate_gemini_explanation(
 
     incident_data = incident.model_dump(mode="json")
 
+    # Retrieve relevant knowledge-base passages for this incident.
+    retrieved_context = []
+    retriever = get_rag_retriever()
+
+    if retriever is not None:
+        try:
+            query_parts = [
+                incident.incident_type or "",
+                incident.abend_code or "",
+                incident.completion_status or "",
+                incident.description or "",
+                incident.primary_message_id or "",
+            ]
+            query = " ".join(part for part in query_parts if part)
+            retrieved_docs = retriever.invoke(query)
+
+            retrieved_context = [
+                {
+                    "source": doc.metadata.get("source", "unknown"),
+                    "content": doc.page_content,
+                }
+                for doc in retrieved_docs
+            ]
+            log.info(
+                "Retrieved %d RAG documents for incident %s",
+                len(retrieved_context),
+                incident.incident_id,
+            )
+        except Exception:
+            log.exception(
+                "RAG retrieval failed for incident %s",
+                incident.incident_id,
+            )
+
     prompt = f"""
 You are an IBM z/OS incident analysis assistant for CriticalFlow AI.
 
@@ -375,19 +424,61 @@ INCIDENT DATA:
 BASELINE KNOWLEDGE:
 {json.dumps(fallback, indent=2)}
 
+RETRIEVED KNOWLEDGE-BASE DOCUMENTS:
+{json.dumps(retrieved_context, indent=2)}
+
+Use retrieved documents only when relevant. Treat them as reference material,
+not proof that a particular event occurred. Do not claim a source supports
+something unless its content actually does. If the documents do not cover the
+incident, say so and distinguish general diagnostic guidance from confirmed
+evidence.
+
 Return JSON only, without Markdown fences.
 """
 
-    try:
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "temperature": 0.2,
-            },
-        )
+    response = None
 
+    for attempt in range(2):
+        try:
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "temperature": 0.2,
+                },
+            )
+            break
+
+        except Exception as exc:
+            error_code = getattr(exc, "code", None)
+            transient = error_code in {429, 500, 503, 504}
+
+            if not transient or attempt == 1:
+                log.exception(
+                    "Gemini request failed for incident %s on attempt %d; "
+                    "using deterministic fallback.",
+                    incident.incident_id,
+                    attempt + 1,
+                )
+                return None
+
+            delay = 2 ** attempt
+            log.warning(
+                "Transient Gemini error for incident %s; retrying in %d second(s).",
+                incident.incident_id,
+                delay,
+            )
+            time.sleep(delay)
+
+    if response is None:
+        log.error(
+            "Gemini returned no response for incident %s; using deterministic fallback.",
+            incident.incident_id,
+        )
+        return None
+
+    try:
         generated = json.loads(response.text or "")
         root_cause = generated.get("root_cause")
         explanation = generated.get("explanation")
