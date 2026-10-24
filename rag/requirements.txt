@@ -5,6 +5,6 @@ langchain
 langchain-community
 langchain-chroma
 langchain-huggingface
-langchain-ibm
 sentence-transformers
 pydantic
+google-genai
