@@ -79,6 +79,46 @@ def test_m5_failure_keeps_m4_result(ai, good_event):
     assert body["explanation"] is None
 
 
+
+def test_reprocess_m4_failure_preserves_previous_results(ai, good_event):
+    # First attempt succeeds and saves both results.
+    first = ai.client.post("/incident?wait=true", json=good_event).json()
+    assert first["pipeline_status"] == "COMPLETE"
+
+    # Second attempt fails at M4.
+    ai.m4 = staticmethod(lambda req: httpx.Response(503, text="M4 unavailable"))
+    retry = ai.client.post(
+        f"/api/v1/incidents/{good_event['incident_id']}/reprocess"
+    ).json()
+
+    assert retry["pipeline_status"] == "M4_FAILED"
+    assert retry["prediction"] == first["prediction"]
+    assert retry["explanation"] == first["explanation"]
+
+
+def test_reprocess_m5_failure_preserves_previous_results(ai, good_event):
+    # First attempt succeeds and saves both results.
+    first = ai.client.post("/incident?wait=true", json=good_event).json()
+    assert first["pipeline_status"] == "COMPLETE"
+
+    # Second attempt gets a different valid prediction, but M5 fails.
+    ai.m4 = staticmethod(
+        lambda req: httpx.Response(
+            200,
+            json={"anomaly": True, "severity": "CRITICAL", "confidence": 0.99},
+        )
+    )
+    ai.m5 = staticmethod(lambda req: httpx.Response(500, text="M5 unavailable"))
+
+    retry = ai.client.post(
+        f"/api/v1/incidents/{good_event['incident_id']}/reprocess"
+    ).json()
+
+    assert retry["pipeline_status"] == "M5_FAILED"
+    assert retry["prediction"] == first["prediction"]
+    assert retry["explanation"] == first["explanation"]
+
+
 def test_unusable_m4_answers_are_reported_not_stored(ai, good_event):
     for bad, needle in (({"anomaly": True, "severity": "SCARY", "confidence": 0.5}, "severity"),
                         ({"anomaly": True, "severity": "HIGH"}, "anomaly_score"),
@@ -112,11 +152,23 @@ def test_invalid_incident_is_422_and_quarantined(ai, good_event):
     assert ai.client.post("/incident", json=[1, 2]).status_code == 422
 
 
-def test_mock_mode_when_no_urls(client, good_event):
+def test_mock_mode_when_no_urls(client, good_event, monkeypatch):
+    from config.settings import get_settings
+
+    monkeypatch.delenv("M4_URL", raising=False)
+    monkeypatch.delenv("M5_URL", raising=False)
+    get_settings.cache_clear()
+
     body = client.post("/incident?wait=true", json=good_event).json()
+
     assert body["pipeline_status"] == "COMPLETE"
-    assert body["prediction"]["source"] == "mock" and body["explanation"]["source"] == "mock"
-    assert client.get("/health").json() == {"status": "ok", "m4": "mock", "m5": "mock"}
+    assert body["prediction"]["source"] == "mock"
+    assert body["explanation"]["source"] == "mock"
+    assert client.get("/health").json() == {
+        "status": "ok",
+        "m4": "mock",
+        "m5": "mock",
+    }
 
 
 def test_overview_view_has_everything(ai, good_event):
@@ -162,3 +214,36 @@ def test_bearer_token_accepted_and_wrong_rejected(ai, good_event, monkeypatch):
     finally:
         monkeypatch.delenv("API_KEY")
         get_settings.cache_clear()
+
+
+def test_incident_lock_skips_duplicate_when_lock_is_held(ai, good_event, monkeypatch):
+    from contextlib import contextmanager
+
+    from db.repository import save_result
+    from orchestration import service
+    from processing.pipeline import run_pipeline
+    from config.settings import get_settings
+    from ingestion.field_map import load_field_map
+    from db.session import get_session_factory
+
+    # Save a valid event directly without triggering background orchestration.
+    result = run_pipeline(
+        [good_event],
+        field_map=load_field_map(get_settings().field_map_path),
+    )
+    assert not result.rejected
+    with get_session_factory()() as session:
+        save_result(session, result, "test:lock")
+        service.mark_received(session, good_event["incident_id"])
+
+    @contextmanager
+    def fake_lock(session, event_id):
+        yield False
+
+    monkeypatch.setattr(service, "_incident_lock", fake_lock)
+
+    with get_session_factory()() as session:
+        status = service.run_orchestration(session, good_event["incident_id"])
+
+    assert status == "ALREADY_PROCESSING"
+    assert ai.calls == []
