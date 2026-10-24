@@ -183,6 +183,66 @@ def _build_explanation(incident: IncidentPayload) -> dict[str, Any]:
     if abend in _ABEND_KNOWLEDGE:
         knowledge = _ABEND_KNOWLEDGE[abend]
         matched_key = abend
+    elif completion == "CC":
+        try:
+            return_code = (
+                int(incident.return_code)
+                if incident.return_code is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            return_code = None
+
+        if return_code == 0:
+            knowledge = {
+                "root_cause": (
+                    "Successful condition-code completion: the job returned "
+                    "code 0, indicating successful completion with no "
+                    "return-code error reported."
+                ),
+                "recommendations": [
+                    "No return-code failure is indicated; confirm the job output if further validation is required.",
+                    "Check downstream job dependencies and expected output datasets.",
+                ],
+                "evidence_tags": [
+                    "condition code",
+                    "return code 0",
+                    "successful completion",
+                ],
+                "confidence": 0.90,
+            }
+            matched_key = "CC_RC0"
+        elif return_code is not None and return_code > 0:
+            knowledge = _COMPLETION_KNOWLEDGE["CC"].copy()
+            knowledge["root_cause"] = (
+                f"Condition-code completion with return code {return_code}: "
+                "the job returned a non-zero code. Its operational meaning "
+                "depends on the application's return-code policy and the "
+                "specific step that produced it."
+            )
+            knowledge["evidence_tags"] = [
+                "condition code",
+                f"return code {return_code}",
+            ]
+            matched_key = "CC_NONZERO"
+        else:
+            knowledge = {
+                "root_cause": (
+                    "Condition-code completion was reported, but the return "
+                    "code is unavailable or invalid. The outcome cannot be "
+                    "classified reliably from the available fields alone."
+                ),
+                "recommendations": [
+                    "Inspect JESMSGLG and the relevant step output to determine the actual return code.",
+                    "Verify the job's completion status and application-specific return-code policy.",
+                ],
+                "evidence_tags": [
+                    "condition code",
+                    "return code unavailable",
+                ],
+                "confidence": 0.60,
+            }
+            matched_key = "CC_UNKNOWN"
     elif completion in _COMPLETION_KNOWLEDGE:
         knowledge = _COMPLETION_KNOWLEDGE[completion]
         matched_key = completion
@@ -212,10 +272,31 @@ def _build_explanation(incident: IncidentPayload) -> dict[str, Any]:
             )
         evidence = knowledge["evidence_tags"].copy()
         confidence = knowledge.get("confidence", 0.75)
+        if abend:
+            outcome = f"terminated abnormally with ABEND {abend}"
+        elif completion == "CC":
+            try:
+                rc = int(incident.return_code) if incident.return_code is not None else None
+            except (TypeError, ValueError):
+                rc = None
+
+            if rc == 0:
+                outcome = "completed with return code 0"
+            elif rc is not None and rc > 0:
+                outcome = f"completed with non-zero return code {rc}"
+            else:
+                outcome = "reported condition-code completion, but the return code is unavailable or invalid"
+        else:
+            outcome = f"reported status {completion or event_type or 'UNKNOWN'}"
+
+        anomaly_text = (
+            f" Anomaly score: {incident.anomaly_score:.3f}."
+            if incident.anomaly_score is not None
+            else ""
+        )
         explanation = (
-            f"Incident {incident.incident_id} on job '{job}' terminated with "
-            f"{'ABEND ' + abend if abend else 'status ' + (completion or event_type or 'UNKNOWN')}."
-            f"{context_sentence} Anomaly score: {incident.anomaly_score or 'N/A'}."
+            f"Incident {incident.incident_id} on job '{job}' {outcome}."
+            f"{context_sentence}{anomaly_text}"
         )
     else:
         # Generic fallback
