@@ -12,12 +12,25 @@ When running standalone (mock mode), it constructs a deterministic but informati
 from __future__ import annotations
 
 import logging
+import json
+import os
 from typing import Any, Dict, List, Optional
+
+from google import genai
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("m5.api")
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+gemini_client = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY
+    else None
+)
 
 app = FastAPI(
     title="CriticalFlow AI: M5 GenAI RCA API",
@@ -330,15 +343,120 @@ def _build_explanation(incident: IncidentPayload) -> dict[str, Any]:
     }
 
 
+def _generate_gemini_explanation(
+    incident: IncidentPayload,
+    fallback: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Generate an incident explanation grounded in deterministic incident knowledge."""
+    if gemini_client is None:
+        log.warning("Gemini is not configured; using deterministic fallback.")
+        return None
+
+    incident_data = incident.model_dump(mode="json")
+
+    prompt = f"""
+You are an IBM z/OS incident analysis assistant for CriticalFlow AI.
+
+Analyze the incident using only the supplied incident data and baseline analysis.
+Do not invent log entries, diagnostic results, or confirmed causes.
+Treat the baseline as a starting hypothesis, not unquestionable fact.
+If evidence is insufficient, clearly state uncertainty.
+Give practical, prioritized remediation steps.
+Return ONLY a valid JSON object with these fields:
+- root_cause: string
+- explanation: string
+- recommendations: array of strings
+- evidence: array of strings
+- confidence: number between 0 and 1
+
+INCIDENT DATA:
+{json.dumps(incident_data, indent=2)}
+
+BASELINE KNOWLEDGE:
+{json.dumps(fallback, indent=2)}
+
+Return JSON only, without Markdown fences.
+"""
+
+    try:
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "temperature": 0.2,
+            },
+        )
+
+        generated = json.loads(response.text or "")
+        root_cause = generated.get("root_cause")
+        explanation = generated.get("explanation")
+        recommendations = generated.get("recommendations")
+        evidence = generated.get("evidence", fallback.get("evidence", []))
+        confidence = generated.get("confidence", fallback.get("confidence", 0.6))
+
+        if (
+            not isinstance(root_cause, str)
+            or not root_cause.strip()
+            or not isinstance(explanation, str)
+            or not explanation.strip()
+            or not isinstance(recommendations, list)
+            or not recommendations
+            or not all(isinstance(item, str) and item.strip() for item in recommendations)
+        ):
+            raise ValueError("Gemini returned an invalid explanation structure.")
+
+        if not isinstance(evidence, list):
+            evidence = fallback.get("evidence", [])
+
+        confidence = float(confidence)
+        confidence = max(0.0, min(1.0, confidence))
+
+        return {
+            "incident_id": incident.incident_id or "INC-UNKNOWN",
+            "root_cause": root_cause.strip(),
+            "explanation": explanation.strip(),
+            "recommendations": recommendations,
+            "recommended_action": "; ".join(recommendations),
+            "evidence": evidence,
+            "confidence": confidence,
+            "model_version": f"Gemini:{GEMINI_MODEL}",
+        }
+
+    except Exception:
+        log.exception(
+            "Gemini generation failed for incident %s; using deterministic fallback.",
+            incident.incident_id,
+        )
+        return None
+
+
 # ============================================================
 # ENDPOINTS
 # ============================================================
 
+
 @app.post("/explain", response_model=ExplanationResponse)
 def explain_incident(incident: IncidentPayload):
-    """Generate a root cause explanation and remediation recommendations for one incident."""
+    """Generate an incident explanation using Gemini with deterministic fallback."""
     try:
-        return _build_explanation(incident)
+        fallback = _build_explanation(incident)
+        generated = _generate_gemini_explanation(incident, fallback)
+
+        if generated is not None:
+            log.info(
+                "Gemini generated explanation for incident %s using %s",
+                incident.incident_id,
+                GEMINI_MODEL,
+            )
+            return generated
+
+        log.warning(
+            "Returning deterministic fallback for incident %s",
+            incident.incident_id,
+        )
+        return fallback
+
     except Exception as exc:
         log.exception("Explanation failed for %s", incident.incident_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Incident explanation failed.") from exc
