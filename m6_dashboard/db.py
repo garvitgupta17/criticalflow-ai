@@ -1,5 +1,6 @@
 
 import os
+import json
 
 from pathlib import Path
 
@@ -65,8 +66,21 @@ def get_connection():
 # 3. Load incidents from the database
 # --------------------------------------------------
 
+
 def load_incidents():
-    """Fetch incident records into a Pandas DataFrame."""
+    """Return incidents and identify whether they came from PostgreSQL or demo data."""
+
+    demo_mode = os.getenv("DASHBOARD_DEMO_MODE", "false").strip().lower() in {
+        "1", "true", "yes"
+    }
+
+    if demo_mode:
+        mock_path = Path(__file__).resolve().parent / "mock_data" / "incidents.json"
+        if not mock_path.exists():
+            raise FileNotFoundError(f"Demo data not found: {mock_path}")
+
+        with open(mock_path, "r", encoding="utf-8") as file:
+            return pd.DataFrame(json.load(file)), "DEMO"
 
     query = """
         SELECT *
@@ -74,20 +88,12 @@ def load_incidents():
         ORDER BY event_time DESC;
     """
 
-    try:
-        with get_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cursor:
-                cursor.execute(query)
-                rows = cursor.fetchall()
-        return pd.DataFrame(rows)
-    except Exception as exc:
-        mock_path = Path(__file__).resolve().parent / "mock_data" / "incidents.json"
-        if mock_path.exists():
-            import json
-            with open(mock_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return pd.DataFrame(data)
-        raise exc
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+    return pd.DataFrame(rows), "POSTGRESQL"
 
 
 # --------------------------------------------------

@@ -506,8 +506,8 @@ def normalize_incidents(source_df):
 
 @st.cache_data(ttl=30)
 def get_incidents():
-    raw_df = load_incidents()
-    return normalize_incidents(raw_df)
+    raw_df, data_source = load_incidents()
+    return normalize_incidents(raw_df), data_source
 
 
 def risk_count(label):
@@ -575,15 +575,22 @@ def risk_pill(label: str) -> str:
 # ============================================================
 
 df = pd.DataFrame()
+data_source = "UNKNOWN"
+
 try:
-    df = get_incidents()
+    df, data_source = get_incidents()
 except Exception as exc:
-    logging.getLogger("m6_dashboard").error("incident load failed: %s", type(exc).__name__)
-    st.error("⚠️ Unable to load incident data. Please check database connectivity and try again.")
+    logging.getLogger("m6_dashboard").error(
+        "Incident load failed: %s", type(exc).__name__
+    )
+    st.error(
+        "Unable to load incident data. Check database connectivity "
+        "or enable demo mode in the app configuration."
+    )
     st.stop()
 
 if df.empty:
-    st.warning("📭 No incidents are currently available in the database.")
+    st.warning("No incidents are currently available.")
     st.stop()
 
 incidents = df.to_dict("records")
@@ -620,18 +627,25 @@ with st.sidebar:
     st.divider()
 
     # Data source status
-    st.markdown(
-        """
-        <div style="margin-bottom:8px;">
-            <span class="status-pill pill-live">● NEON POSTGRESQL</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption(f"Records loaded: **{len(df):,}**")
-    st.caption(f"Last refresh: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}")
 
-    st.divider()
+    if data_source == "DEMO":
+        st.markdown(
+            """
+            <div style="margin-bottom:8px;">
+                <span class="status-pill pill-medium">● DEMO DATA</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div style="margin-bottom:8px;">
+                <span class="status-pill pill-live">● POSTGRESQL</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # Auto-refresh control
     auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
@@ -668,15 +682,16 @@ if page_key == "Overview":
         '<p class="page-subtitle">AI-powered incident intelligence and operational risk monitoring for IBM Z® / LinuxONE</p>',
         unsafe_allow_html=True,
     )
-    st.markdown(
-        """
-        <div class="data-banner">
-            🟢&nbsp;<strong>LIVE — NEON POSTGRESQL</strong>&nbsp;·&nbsp;
-            Dashboard is reading incident data directly from the hosted PostgreSQL view.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    if data_source == "DEMO":
+        st.info(
+            "DEMO MODE — Showing sample incidents from the bundled dataset. "
+            "No live database connection is being used."
+        )
+    else:
+        st.success(
+            "POSTGRESQL — Incident data loaded from the configured database."
+        )
 
     # ---- KPI Metrics ----
     total_incidents = len(df)
