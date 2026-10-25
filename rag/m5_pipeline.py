@@ -27,11 +27,15 @@ class M5ResponseContract(BaseModel):
 # 2. RAG Vector Database Initialization
 # ==========================================
 def initialize_vector_db():
-    """Load Markdown knowledge-base files and initialize ChromaDB once."""
-    os.makedirs("./knowledge_base", exist_ok=True)
+    """Synchronize Markdown knowledge-base files with the persistent ChromaDB collection."""
+    import hashlib
+    from pathlib import Path
+
+    knowledge_base = Path("./knowledge_base")
+    knowledge_base.mkdir(parents=True, exist_ok=True)
 
     loader = DirectoryLoader(
-        "./knowledge_base/",
+        str(knowledge_base),
         glob="**/*.md",
         loader_cls=TextLoader,
     )
@@ -41,17 +45,30 @@ def initialize_vector_db():
         chunk_size=400,
         chunk_overlap=50,
     )
-    docs = text_splitter.split_documents(documents)
+    chunks = text_splitter.split_documents(documents)
 
-    # Remove exact duplicate chunks while preserving their source metadata.
-    unique_docs = []
-    seen = set()
+    # Normalize source paths so they remain consistent across container restarts.
+    for doc in chunks:
+        source_path = Path(doc.metadata["source"])
+        if not source_path.is_absolute():
+            source_path = Path.cwd() / source_path
 
-    for doc in docs:
-        key = (doc.page_content.strip(), doc.metadata.get("source", "unknown"))
-        if key not in seen:
-            seen.add(key)
-            unique_docs.append(doc)
+        relative_source = source_path.resolve().relative_to(
+            knowledge_base.resolve()
+        )
+        doc.metadata["source"] = (
+            Path("knowledge_base") / relative_source
+        ).as_posix()
+
+    # Deduplicate identical chunks within the same source.
+    unique_chunks = []
+    seen_chunks = set()
+
+    for doc in chunks:
+        key = (doc.metadata["source"], doc.page_content.strip())
+        if key not in seen_chunks:
+            seen_chunks.add(key)
+            unique_chunks.append(doc)
 
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2"
@@ -63,8 +80,61 @@ def initialize_vector_db():
         persist_directory="./vector_db",
     )
 
-    if vector_db._collection.count() == 0:
-        vector_db.add_documents(unique_docs)
+    collection = vector_db._collection
+
+    # Hash source + content so unchanged chunks retain stable IDs.
+    expected_by_source = {}
+
+    for doc in unique_chunks:
+        source = doc.metadata["source"]
+        normalized_content = doc.page_content.strip()
+        chunk_id = hashlib.sha256(
+            f"{source}:{normalized_content}".encode("utf-8")
+        ).hexdigest()
+
+        expected_by_source[(source, chunk_id)] = doc
+
+    # Read existing records and identify stale IDs.
+    existing = collection.get(include=["metadatas"])
+    existing_ids = existing["ids"]
+    existing_metadatas = existing["metadatas"]
+
+    expected_ids = {
+        chunk_id for _, chunk_id in expected_by_source
+    }
+
+    stale_ids = [
+        record_id
+        for record_id, metadata in zip(existing_ids, existing_metadatas)
+        if (
+            metadata.get("source", "") not in {
+                doc.metadata["source"]
+                for doc in unique_chunks
+            }
+            or record_id not in expected_ids
+        )
+    ]
+
+    if stale_ids:
+        collection.delete(ids=stale_ids)
+
+    # Insert only IDs that are not already stored.
+    current_ids = set(collection.get(include=[])["ids"])
+    docs_to_add = []
+    ids_to_add = []
+
+    for (_, chunk_id), doc in expected_by_source.items():
+        if chunk_id not in current_ids:
+            docs_to_add.append(doc)
+            ids_to_add.append(chunk_id)
+
+    if docs_to_add:
+        vector_db.add_documents(docs_to_add, ids=ids_to_add)
+
+    print(
+        f"ChromaDB sync complete: {len(unique_chunks)} expected chunks, "
+        f"{len(docs_to_add)} added, {len(stale_ids)} stale chunks removed."
+    )
 
     return vector_db.as_retriever(search_kwargs={"k": 2})
 
